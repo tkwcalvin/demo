@@ -1,0 +1,7 @@
+CodeGeeX/
+log/
+test.ipynb
+__pycache__/
+*.sh
+*.csh
+.DS_Store
