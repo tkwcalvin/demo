@@ -13,16 +13,18 @@ import random
 import string
 from nltk.corpus import stopwords
 from peft import PeftModel
+from openai import AzureOpenAI
 
 # START imports By Erfan
 import sys
 import yaml
-config = []
+config = {}
 try:
-    with open(os.path.join('config.yaml'), 'r') as f:
+    config_path = os.path.join(os.path.dirname(__file__), 'config.yaml')
+    with open(config_path, 'r') as f:
         config = yaml.safe_load(f)
-except Exception:
-    print("cannot find config.yaml!!")
+except Exception as e:
+    print(f"cannot find config.yaml!! Error: {e}")
 # END imports By Erfan
 # Standard Library Modules
 import argparse
@@ -49,7 +51,12 @@ B_SYS_CLLAMA, E_SYS_CLLAMA = "<<SYS>>\n", "\n<</SYS>>\n\n"
 # openai.api_key = os.environ['OPENAI_API_KEY']
 # gemini_api_key = os.getenv("GEMINI_API_KEY")
 # genai.configure(api_key=gemini_api_key)
-gemini_model = genai.GenerativeModel("gemini-pro")
+client = AzureOpenAI(
+    api_key=os.environ['AZURE_OPENAI_API_KEY'],
+    azure_endpoint=os.environ['AZURE_OPENAI_API_BASE'],
+    api_version="2023-05-15"
+)
+# gemini_model = genai.GenerativeModel("gemini-pro")
 # client = OpenAI()  # Not available in 0.28.0
 PROMPT_START_0 = 'Generate Python3 code (Markdown):\n'
 PROMPT_START_1 = 'Generate either Python3 code only (Markdown) or no code:\n'
@@ -695,14 +702,14 @@ def evaluate_clarifying_questions(
     
     topn = 1
     temperature = 1.0
-    model = 'gpt-3.5-turbo-0125' #'gpt-3.5-turbo'
+    model = 'gpt-35-turbo' #'gpt-3.5-turbo'
     prompt_evaluate_questions = load_prompt_from_config(phase = 2)
     content = prompt_evaluate_questions.format(
                 missing_information=missing_information,
                 clarifying_questions=clarifying_questions,
                 problem=problem
             )
-    completion = openai.ChatCompletion.create(
+    completion = client.chat.completions.create(
         model=model,
         n=topn,
         temperature=temperature,
@@ -712,9 +719,9 @@ def evaluate_clarifying_questions(
         }]
     )
     print('!!!!!!!PROMPT_EVALUATE_QUESTIONS='+content, file=print_file)
-    print('!!!!!!!Completion='+completion['choices'][0]['message']['content'], file=print_file)
+    print('!!!!!!!Completion='+completion.choices[0].message.content, file=print_file)
     # Convert completion content to a string if it's not already a string
-    completion_content = str(completion['choices'][0]['message']['content'])
+    completion_content = str(completion.choices[0].message.content)
 
     # Use re.findall() with the completion content
     question_quality = re.findall(r'QUALITY\s*=?\s*(\d+)', completion_content)
@@ -839,8 +846,8 @@ def description_2_code_one_round(prompt, model, topn, temperature, args, open_so
                       ]
         )
         first_response_list = []
-        for i in completion['choices']:
-            first_response_list.append(i['message']['content'])
+        for i in completion.choices:
+            first_response_list.append(i.message.content)
 
         new_prompt = "You are an expert in software engineering. You will be given the problem description and current code of a coding task. You will decide whether to ask clarifying questions or return the code with markup. \n ### Problem Description: \n"+ prompt + "\n ### Generated Code From Previous Iteration:\n" + first_response_list[0]
         
@@ -854,8 +861,8 @@ def description_2_code_one_round(prompt, model, topn, temperature, args, open_so
         )
         response_list = []
         # code_list = []
-        for i in completion['choices']:
-            response_list.append(i['message']['content'])
+        for i in completion.choices:
+            response_list.append(i.message.content)
 
     else:
         messages=[{"role": "user", "content": prompt}]
@@ -877,18 +884,18 @@ def generate_response(model, msgs, topn, temperature, args, open_source_model, t
     if 'Llama' in args.model or 'deepseek' in args.model or 'CodeQwen' in args.model:
         user_input = tokenizer.apply_chat_template(msgs, tokenize=False, add_generation_prompt=True, return_tensors="pt")
         for i in range(topn):
-            if 'two-shot' in args.model:
-                response_list.append(get_completion_codellama_instruct_nl_to_pl(CODELLAMA_NL_2_PL_HUMANEVAL, user_input_without_prompt, open_source_model, tokenizer, args))
-            elif 'Llama' in args.model:
-                CODELLAMA_NL_2_PL_PROMPT = [
-                    {  # Instructions
-                        "role": "system",
-                        "content": prompt,
-                    },
-                ]
-                response_list.append(get_completion_codellama_instruct_nl_to_pl('CODELLAMA', prompt + user_input_without_prompt, open_source_model, tokenizer, args))
-            else:
-                response_list.append(get_completion_codellama_instruct_nl_to_pl('', user_input, open_source_model, tokenizer, args))
+            # if 'two-shot' in args.model:
+            #     response_list.append(get_completion_codellama_instruct_nl_to_pl(CODELLAMA_NL_2_PL_HUMANEVAL, user_input_without_prompt, open_source_model, tokenizer, args))
+            # elif 'Llama' in args.model:
+            #     CODELLAMA_NL_2_PL_PROMPT = [
+            #         {  # Instructions
+            #             "role": "system",
+            #             "content": prompt,
+            #         },
+            #     ]
+            #     response_list.append(get_completion_codellama_instruct_nl_to_pl('CODELLAMA', prompt + user_input_without_prompt, open_source_model, tokenizer, args))
+            
+            response_list.append(get_completion_codellama_instruct_nl_to_pl('', user_input, open_source_model, tokenizer, args))
         return response_list
     elif model == 'Okanagan':
         # this code assume topn=1
@@ -931,14 +938,22 @@ def generate_response(model, msgs, topn, temperature, args, open_source_model, t
     #         response_list.append(str(responses[0]['completion_list']))
     #     return response_list
     else:
-        completion = openai.ChatCompletion.create(
+        # completion = openai.ChatCompletion.create(
+        #     model=model,
+        #     n=topn,
+        #     temperature=temperature,
+        #     messages=msgs
+        # )
+        completion = client.chat.completions.create(
             model=model,
+            messages=msgs,
             n=topn,
             temperature=temperature,
-            messages=msgs
         )
-        for i in completion['choices']:
-            response_list.append(i['message']['content'])
+        # for i in completion['choices']:
+        #     response_list.append(i['message']['content'])
+        for i in completion.choices:
+            response_list.append(i.message.content)
         return response_list
 
 def description_2_code_multi_rounds(prompt_modified, task_id, entry_point, prompt, user_input, original_prompt, model, topn, temperature, args, open_source_model, tokenizer, cached_response, cached_qq, cached_answer):
@@ -947,27 +962,27 @@ def description_2_code_multi_rounds(prompt_modified, task_id, entry_point, promp
     response_list = []
     model_2nd_round = OK_MODEL if model == 'Okanagan' else model
     # ROUND 1
-    if model == "AgentCoder":
-        # Adding the following: entry_point, task_id, original_prompt for AgentCoder
-        if prompt_modified == False:
-            messages.append({"task_id": task_id,"prompt": original_prompt, "entry_point": entry_point, "clarity_prompt": ""})
-        else:
-            messages.append({"task_id": task_id,"prompt": original_prompt, "entry_point": entry_point, "clarity_prompt": PROMPT_START_3_v4})
-    else:
+    # if model == "AgentCoder":
+    #     # Adding the following: entry_point, task_id, original_prompt for AgentCoder
+    #     if prompt_modified == False:
+    #         messages.append({"task_id": task_id,"prompt": original_prompt, "entry_point": entry_point, "clarity_prompt": ""})
+    #     else:
+    #         messages.append({"task_id": task_id,"prompt": original_prompt, "entry_point": entry_point, "clarity_prompt": PROMPT_START_3_v4})
+    
         ## 1st round: initial code generation
-        if(model == 'Okanagan'):
-            full_prompt = OK_PROMPT_CODEGEN + user_input
-        else:
-            full_prompt = prompt.format(
-                        problem=user_input
-                    )
+    if(model == 'Okanagan'):
+        full_prompt = OK_PROMPT_CODEGEN + user_input
+    else:
+        full_prompt = prompt.format(
+                    problem=user_input
+                )
 
-        
-        print("\n\n!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!", file=print_file)
-        print('!!!!!!!!!!!!! prompt:\n' + full_prompt, file=print_file)
-        print("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!\n", file=print_file)
-        
-        messages.append({"role": "user","content": full_prompt})
+    
+    print("\n\n!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!", file=print_file)
+    print('!!!!!!!!!!!!! prompt:\n' + full_prompt, file=print_file)
+    print("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!\n", file=print_file)
+    
+    messages.append({"role": "user","content": full_prompt})
     if args.log_phase_output >= 2:
         response_list.append(cached_response)
     else:
@@ -1007,20 +1022,20 @@ def description_2_code_multi_rounds(prompt_modified, task_id, entry_point, promp
                 continue
 
             ## 3rd round: generate final code: generate 2nd-round code with chat history (Q&A)
-            if model == "AgentCoder":
-                print("This is the original message:", messages)
-                # We can only send one prompt to AgentCoder for now. Adding multiple roles requires major code changes in the original AgentCoder repo
-                new_prompt = "Original Question: " + original_prompt + " First Response: " + response + " Feedback: " + answer + " " + PROMPT_2ND_ROUND
-                messages[-1]["prompt"] = new_prompt
-                for message in messages:
-                    message['clarity_prompt'] = ""
+            # if model == "AgentCoder":
+            #     print("This is the original message:", messages)
+            #     # We can only send one prompt to AgentCoder for now. Adding multiple roles requires major code changes in the original AgentCoder repo
+            #     new_prompt = "Original Question: " + original_prompt + " First Response: " + response + " Feedback: " + answer + " " + PROMPT_2ND_ROUND
+            #     messages[-1]["prompt"] = new_prompt
+            #     for message in messages:
+            #         message['clarity_prompt'] = ""
 
-                msgs_i = messages.copy()
+            #     msgs_i = messages.copy()
 
-            else:
-                msgs_i = messages.copy()
-                msgs_i.append({"role":"assistant","content": response})
-                msgs_i.append({"role":"user","content": answer + PROMPT_2ND_ROUND})
+            
+            msgs_i = messages.copy()
+            msgs_i.append({"role":"assistant","content": response})
+            msgs_i.append({"role":"user","content": answer + PROMPT_2ND_ROUND})
             
             response_2nd = generate_response(model_2nd_round, msgs_i, 1, temperature, args, open_source_model, tokenizer)
             code = response_2_code(response_2nd[0])
@@ -1083,6 +1098,8 @@ def HumanEval_experiment(dataset, dataset_loc, option, model, topn, temperature,
     # write printed output to a file (print_file)
     print_file_str = './log/print' + log_file[5:]
     global print_file
+    if not os.path.exists(print_file_str):
+        os.makedirs(os.path.dirname(print_file_str), exist_ok=True)
     print_file = open(print_file_str, 'a') # append new content if exists already
     
     problem_list = []
@@ -1136,20 +1153,20 @@ def HumanEval_experiment(dataset, dataset_loc, option, model, topn, temperature,
             description = problem[input_prompt]
             try:
                 prompt = create_prompt(description, option, remove_percentage)
-                if option.startswith('randRemove'):
-                    # legacy part
-                    # Dont need to make any changes to this I think, since this is legacy part
-                    response_list, code_list, qq_list = description_2_code_one_round(prompt, model, topn, temperature, args, open_source_model, tokenizer)
-                else:
-                    original_prompt = problem['prompt']
-                    entry_point = problem['entry_point']
-                    task_id = problem['name']
-                    # prompt_start = ORIGINAL_PROMPT_START_0 if input_prompt == 'prompt' else PROMPT_START_3_v2
-                    # We will use "prompt_modified" to check whether AgentCoder is getting a modified prompt or an original prompt, based on which, we decide whether to send in a "generate clarifying questions" prompt or not.
-                    # A new prompt called PROMPT_START_3_v4 has been created for the same.
-                    prompt_modified = False if input_prompt == 'prompt' else True
-                    prompt_start = ORIGINAL_PROMPT_START_0 if input_prompt == 'prompt' else config_phase1_prompt
-                    response_list, code_list, qq_list, ans_list = description_2_code_multi_rounds(prompt_modified, task_id, entry_point, prompt_start, description, original_prompt, model, topn, temperature, args, open_source_model, tokenizer, cached_responses.get(key, ''), cached_qqs.get(key, 0), cached_answers.get(key, ''))
+                # if option.startswith('randRemove'):
+                #     # legacy part
+                #     # Dont need to make any changes to this I think, since this is legacy part
+                #     response_list, code_list, qq_list = description_2_code_one_round(prompt, model, topn, temperature, args, open_source_model, tokenizer)
+                
+                original_prompt = problem['prompt']
+                entry_point = problem['entry_point']
+                task_id = problem['name']
+                # prompt_start = ORIGINAL_PROMPT_START_0 if input_prompt == 'prompt' else PROMPT_START_3_v2
+                # We will use "prompt_modified" to check whether AgentCoder is getting a modified prompt or an original prompt, based on which, we decide whether to send in a "generate clarifying questions" prompt or not.
+                # A new prompt called PROMPT_START_3_v4 has been created for the same.
+                prompt_modified = False if input_prompt == 'prompt' else True
+                prompt_start = ORIGINAL_PROMPT_START_0 if input_prompt == 'prompt' else config_phase1_prompt
+                response_list, code_list, qq_list, ans_list = description_2_code_multi_rounds(prompt_modified, task_id, entry_point, prompt_start, description, original_prompt, model, topn, temperature, args, open_source_model, tokenizer, cached_responses.get(key, ''), cached_qqs.get(key, 0), cached_answers.get(key, ''))
             except Exception as e:
                 print('%s---------%s' % (problem['name'], e), flush=True)
                 continue
@@ -1196,33 +1213,33 @@ def HumanEval_experiment(dataset, dataset_loc, option, model, topn, temperature,
             #break
     print('Done!', flush=True)
 
-def test_starcoder(tokenizer, model, user_input, max_length):
-    device = "cuda" if torch.cuda.is_available() else "cpu"
-    inputs = tokenizer.encode(
-        input_ids=user_input,
-        # compute a + b 
-        #"def print_hello_world():", 
-        return_tensors="pt",
-        ).to(device)
-    print('device=', device)
-    outputs = model.generate(
-        inputs,
-        max_length=max_length,
-        )
-    print('!!!!!!!!!!')
-    print(tokenizer.decode(outputs[0]))
-    print('!!!!!!!!!!')
+# def test_starcoder(tokenizer, model, user_input, max_length):
+#     device = "cuda" if torch.cuda.is_available() else "cpu"
+#     inputs = tokenizer.encode(
+#         input_ids=user_input,
+#         # compute a + b 
+#         #"def print_hello_world():", 
+#         return_tensors="pt",
+#         ).to(device)
+#     print('device=', device)
+#     outputs = model.generate(
+#         inputs,
+#         max_length=max_length,
+#         )
+#     print('!!!!!!!!!!')
+#     print(tokenizer.decode(outputs[0]))
+#     print('!!!!!!!!!!')
 
-def test_codellama(tokenizer, model, user_input, max_length):
-    timea = time.time()
-    input_ids = tokenizer(user_input, return_tensors="pt")["input_ids"].to(model.device)
-    generated_ids = model.generate(input_ids, max_new_tokens=max_length)
-    filling = tokenizer.batch_decode(generated_ids[:, input_ids.shape[1]:], skip_special_tokens = True)[0]
+# def test_codellama(tokenizer, model, user_input, max_length):
+#     timea = time.time()
+#     input_ids = tokenizer(user_input, return_tensors="pt")["input_ids"].to(model.device)
+#     generated_ids = model.generate(input_ids, max_new_tokens=max_length)
+#     filling = tokenizer.batch_decode(generated_ids[:, input_ids.shape[1]:], skip_special_tokens = True)[0]
     
-    print('!!!!!!!!!!')
-    print(filling)
-    print('!!!!!!!!!!')
-    print("timea = time.time()",-timea + time.time())
+#     print('!!!!!!!!!!')
+#     print(filling)
+#     print('!!!!!!!!!!')
+#     print("timea = time.time()",-timea + time.time())
 
 
 # call LLM to generate results from problems
@@ -1415,9 +1432,9 @@ if __name__ == "__main__":
                 offload_folder=offload_folder,
             )
     
-    if args.do_test_only:
-        test_codellama(tokenizer, model, args.user_input, args.seq_length)
-    elif args.do_save_model:
+    # if args.do_test_only:
+        # test_codellama(tokenizer, model, args.user_input, args.seq_length)
+    if args.do_save_model:
         tokenizer.save_pretrained(args.saved_model_path)
         model.save_pretrained(args.saved_model_path)
     elif args.dataset.startswith('HumanEval'):

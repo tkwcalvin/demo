@@ -1,6 +1,6 @@
 CodeGeeX/
 log/
-test.ipynb
+*.ipynb
 __pycache__/
 *.sh
 *.csh

@@ -51,7 +51,7 @@ B_SYS_CLLAMA, E_SYS_CLLAMA = "<<SYS>>\n", "\n<</SYS>>\n\n"
 # API CONFIGURATION
 # ============================================================================
 # OpenAI API configuration
-openai.api_key = os.environ['OPENAI_KEY']
+# openai.api_key = os.environ['OPENAI_KEY']
 openai.api_key = os.environ['OPENAI_API_KEY']  # Alternative environment variable name
 client = OpenAI()
 
@@ -379,6 +379,7 @@ common_words = [
 ]
 
 
-
+HumanEvalComm_prompts = ['prompt1a','prompt1c','prompt1p','prompt2ac','prompt2ap','prompt2cp','prompt3acp']
+HumanEval_prompt = ["prompt"]
 
 

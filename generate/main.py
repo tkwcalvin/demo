@@ -23,24 +23,26 @@ import argparse
 from transformers import AutoModelForCausalLM, AutoTokenizer
 from peft import PeftModel
 import torch
-if __name__ == "__main__":
-    # ============================================================================
-    # ARGUMENT PARSING SETUP
-    # ============================================================================
+from model.experiment import *
+from model.open_source_model import *
+from model.log import *
+from process import Experiment
+
+def init():
     parser = argparse.ArgumentParser(
         description="HumanEval Code Generation Experiment Runner",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
-Examples:
-    # Basic experiment with GPT-3.5
-    python main.py -d HumanEvalComm -m gpt-3.5-turbo -n 1 -t 1.0 -o original
-    
-    # Multi-round experiment with phase tracking
-    python main.py -d HumanEvalComm -m gpt-4 -n 3 -t 0.7 -o original -so 1
-    
-    # Test specific problems range
-    python main.py -d HumanEvalComm -m gpt-3.5-turbo -n 1 -t 1.0 -o original -minp 10 -maxp 20
-        """
+        Examples:
+            # Basic experiment with GPT-3.5
+            python main.py -d HumanEvalComm -m gpt-3.5-turbo -n 1 -t 1.0 -o original
+            
+            # Multi-round experiment with phase tracking
+            python main.py -d HumanEvalComm -m gpt-4 -n 3 -t 0.7 -o original -so 1
+            
+            # Test specific problems range
+            python main.py -d HumanEvalComm -m gpt-3.5-turbo -n 1 -t 1.0 -o original -minp 10 -maxp 20
+            """
     )
     
     # Core experiment parameters
@@ -158,12 +160,17 @@ Examples:
     # ============================================================================
     # ARGUMENT PARSING AND MODEL INITIALIZATION
     # ============================================================================
-    args = parser.parse_args()
+    
+    return parser
+
+
+
+
+def load_model(args):
     model = None
     tokenizer = None
     device = "cuda" if torch.cuda.is_available() else "cpu"
     print('device: ', device)
-    
     # ============================================================================
     # OPEN SOURCE MODEL LOADING
     # ============================================================================
@@ -252,6 +259,80 @@ Examples:
                 cache_dir=HF_HOME,
                 offload_folder=offload_folder,
             )
+
+    return model, tokenizer
+
+
+def load_configs(args):
+    exp_config = ExpConfig(
+        coreExpConfig=CoreExpConfig(
+            dataset=args.dataset,
+            model=args.model,
+            topn=args.topn,
+            temperature=args.temperature,
+            option=args.option,
+            log_phase_input=args.log_phase_input,
+            log_phase_output=args.log_phase_output,
+            min_problem_idx=args.min_problem_idx,
+            max_num_problems=args.max_num_problems,
+            dataset_loc=args.dataset_loc,
+            phase1_prompt=args.phase1_prompt,
+            phase2_prompt=args.phase2_prompt,
+        ),
+        advancedConfig=AdvancedConfig(
+            bootstrap_method=args.bootstrap_method,
+            resume_task_bs=args.resume_task_bs,
+            resume_task_run=args.resume_task_run,
+            skip_bootstrap=args.skip_bootstrap,
+            version=args.version,
+        ),
+        testingConfig=TestingConfig(
+            do_test_only=args.do_test_only,
+            do_save_model=args.do_save_model,
+            pass_only=args.pass_only,
+            mask_func_name=args.mask_func_name,
+        ),
+    )
+    open_source_model_config = openSourceModelConfig(
+        pathConfig=pathConfig(
+            model_name_or_path=args.model_name_or_path,
+            saved_model_path=args.saved_model_path,
+            finetuned_model_path=args.finetuned_model_path,
+            hf_dir=args.hf_dir,
+        ),
+        generationConfig=generationConfig(
+            chain_length=args.chain_length,
+            seq_length=args.seq_length,
+            gen_length=args.gen_length,
+            do_sample=args.do_sample,
+        ),
+        optimizationConfig=optimizationConfig(
+            use_int8=args.use_int8,
+            use_fp16=args.use_fp16,
+            greedy_early_stop=args.greedy_early_stop,
+        ),
+    )
+
+
+    log_config = LogConfig(
+        log_phase_input=args.log_phase_input,
+        log_phase_output=args.log_phase_output,
+    )
+
+    
+
+    return exp_config, open_source_model_config, log_config
+    
+
+
+if __name__ == "__main__":
+    # ============================================================================
+    # ARGUMENT PARSING SETUP
+    # ============================================================================
+    parser = init()
+    args = parser.parse_args()
+    model, tokenizer = load_model(args)
+    exp_config, open_source_model_config, log_config = load_configs(args)
     
     # ============================================================================
     # EXECUTION MODE SELECTION
@@ -271,16 +352,13 @@ Examples:
         print(f"Model: {args.model}, Temperature: {args.temperature}, Top-N: {args.topn}")
         print(f"Option: {args.option}")
         HumanEval_experiment(
-            args.dataset, 
-            './Benchmark/HumanEvalComm.jsonl', 
-            args.option, 
-            args.model, 
-            args.topn, 
-            args.temperature, 
-            args, 
+            exp_config.coreExpConfig,
             model, 
             tokenizer
         )
     else:
         print(f"Unsupported dataset: {args.dataset}")
         print("Supported datasets: HumanEval, HumanEvalComm, APPS, code_contest")
+
+
+

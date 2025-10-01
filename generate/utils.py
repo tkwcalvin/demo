@@ -230,3 +230,49 @@ def string_to_int(input_string):
         return result
     except ValueError:
         return None  # Return None if the string cannot be converted to an integer
+
+
+# ============================================================================
+# HELPER FUNCTIONS FOR API CALLS
+# ============================================================================
+
+def call_gemini(prompt, model):
+    """
+    Call Google Gemini API for evaluation tasks.
+    
+    Args:
+        prompt (str): The prompt to send to Gemini
+    
+    Returns:
+        int: Parsed integer response from Gemini, or -1 if parsing fails
+    """
+    response = model.generate_content(prompt)
+    try:
+        return int(response.text.strip())
+    except ValueError:
+        return -1
+
+def call_chatgpt_o1(prompt, client):
+    """
+    Call OpenAI GPT-4o-mini API for evaluation tasks.
+    
+    Args:
+        prompt (str): The prompt to send to GPT-4o-mini
+    
+    Returns:
+        int: Parsed integer response from GPT-4o-mini, or -1 if parsing fails
+    """
+    completion = client.chat.completions.create(
+        model="gpt-4o-mini",
+        messages=[
+            {"role": "system", "content": "You are a helpful assistant."},
+            {
+                "role": "user",
+                "content": prompt
+            }
+        ]
+    )
+    try:
+        return int(completion.choices[0].message.content.strip())
+    except ValueError:
+        return -1
