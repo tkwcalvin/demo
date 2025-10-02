@@ -20,8 +20,8 @@ from model.experiment import *
 from model.log import *
 
 from utils import string_to_int, get_ith_element
-from prompt import load_prompt_from_config, create_prompt
-from handle import description_2_code_one_round, description_2_code_multi_rounds
+from prompt import create_prompt
+from handle import Handler
 from config import *
 import os
 import json
@@ -30,74 +30,72 @@ import time
 from handle import Handler
 
 from model.cache import Cache
+from model.experiment import CoreExpConfig
 
 class Experiment:
-    def __init__(self, model, tokenizer, exp_config: CoreExpConfig, log_config: LogConfig):
-        
-        self.model = model
-        self.tokenizer = tokenizer
+    def __init__(self, exp_config: CoreExpConfig):
         self.exp_config = exp_config
-        self.log_config = log_config
         self.problem_list = []
         self.cache = None
+        self.log_config = None
+        self.remove_percentage = 0
         self.prepare_experiment()
     
     def prepare_experiment(self):
-        # ============================================================================
         # EXPERIMENT SETUP AND LOGGING
         # ============================================================================
-        self.remove_percentage = self.init_file_log_and_print()
-        # ============================================================================
-        # DATASET LOADING AND FILTERING
-        # ============================================================================
-        self.problem_list = self.load_dataset()
-        # ============================================================================
-        # CACHING AND RESUMPTION SUPPORT
-        # ============================================================================
-        # Load cached results to support experiment resumption
-        self.cache = self.load_cached_results()
+        cache_path, print_file, self.remove_percentage = self.init_file_log_and_print(self.exp_config)
+        self.log_config = LogConfig(print_file=print_file)
+        self.cache = self.load_cached_results(cache_path)
+        self.problem_list = self.load_dataset(
+            self.exp_config.datasetConfig.dataset_loc, 
+            self.exp_config.datasetConfig.min_problem_idx, 
+            self.exp_config.datasetConfig.max_num_problems
+        )
 
-    def init_file_log_and_print(self):
+    def init_file_log_and_print(self, ExpConfig: CoreExpConfig):
+        cache_path = None
+        print_file = None
         remove_percentage = 0
+
         # Determine log file name based on experiment configuration
-        if self.exp_config.option == 'original':
-            self.log_config.log_file = './log/dataset_%s_model_%s_topn_%s_temperature_%s.log_%s' % \
-                    (self.exp_config.dataset, self.exp_config.model, self.exp_config.topn, self.exp_config.temperature, str(self.log_config.log_phase_input))
+        if ExpConfig.datasetConfig.option == 'original':
+            cache_path = './log/dataset_%s_model_%s_topn_%s_temperature_%s.log_%s' % \
+                    (ExpConfig.datasetConfig.dataset, ExpConfig.modelConfig.model, ExpConfig.modelConfig.topn, ExpConfig.modelConfig.temperature, str(ExpConfig.log_phase_input))
         else:
-            self.log_config.log_file = './log/%s_dataset_%s_model_%s_topn_%s_temperature_%s.log_%s' % \
-                    (self.exp_config.option, self.exp_config.dataset, self.exp_config.model, self.exp_config.topn, self.exp_config.temperature, str(self.log_config.log_phase_input))
-            remove_percentage = string_to_int(get_ith_element(self.exp_config.option, 1))
+            cache_path = './log/%s_dataset_%s_model_%s_topn_%s_temperature_%s.log_%s' % \
+                    (ExpConfig.datasetConfig.option, ExpConfig.datasetConfig.dataset, ExpConfig.modelConfig.model, ExpConfig.modelConfig.topn, ExpConfig.modelConfig.temperature, str(ExpConfig.log_phase_input))
+            remove_percentage = string_to_int(get_ith_element(ExpConfig.datasetConfig.option, 1))
         
        # write printed output to a file (print_file)
-        print_file_str = './log/print' + self.log_config.log_file[5:]
-        self.log_config.print_file = open(print_file_str, 'a') # append new content if exists already
-        return remove_percentage
+        print_file_str = './log/print' + cache_path[5:]
+        print_file = open(print_file_str, 'a') # append new content if exists already
+        return cache_path, print_file, remove_percentage
 
 
-    def load_dataset(self):
-        dataset_loc = self.exp_config.dataset_loc
+    def load_dataset(self, dataset_loc, min_problem_idx, max_num_problems):
         line_cnt = 0
         problem_list = []
         # Load problems from dataset with optional filtering
         with open(dataset_loc, 'r') as f:
             for line in f.readlines():
                 # Apply index filtering if specified
-                if self.exp_config.min_problem_idx < 0 or line_cnt >= self.exp_config.min_problem_idx:
-                    self.problem_list.append(json.loads(line))
+                if min_problem_idx < 0 or line_cnt >= min_problem_idx:
+                    problem_list.append(json.loads(line))
                 line_cnt += 1
                 # Stop if maximum number of problems is reached
-                if self.exp_config.max_num_problems >= 0 and line_cnt >= self.exp_config.max_num_problems:
+                if max_num_problems >= 0 and line_cnt >= max_num_problems:
                     break
         return problem_list
 
 
-    def load_cached_results(self):
+    def load_cached_results(self, cache_path):
         cached_names = set()
         cached_responses = {}
         cached_answers = {}
         cached_qqs = {}
-        if os.path.exists(self.log_config.log_file):
-            with open(self.log_config.log_file, 'r') as f:
+        if os.path.exists(cache_path):
+            with open(cache_path, 'r') as f:
                 for line in f:
                     content = json.loads(line)
                     key = content['name']+'_'+content['prompt_type']
@@ -105,58 +103,54 @@ class Experiment:
                     cached_responses[key] = content['response']
                     cached_answers[key] = content['answer']
                     cached_qqs[key] = content['question_quality']
-        cache = Cache(cached_names, cached_responses, cached_answers, cached_qqs)
+        cache = Cache(
+            cached_file_path=cache_path, 
+            cached_names=cached_names, 
+            cached_responses=cached_responses, 
+            cached_answers=cached_answers, 
+            cached_qqs=cached_qqs
+        )
         return cache
         
         
 
 
-    def HumanEval_experiment(self):
+    def HumanEval_experiment(self, model, tokenizer):
         # ============================================================================
         # MAIN EXPERIMENT LOOP
         # ============================================================================
         response_list = []
+        handler = Handler(model, tokenizer, 
+            exp_config=self.exp_config, 
+            log_config=self.log_config, 
+            cache=self.cache
+        )
         for problem in self.problem_list:
             print('----------------------problem name: %s--------------------------------' % (problem['name']), flush=True)
-            print('using %s to generate response' % (self.model), flush=True)
+            print('using %s to generate response' % (self.exp_config.modelConfig.model), flush=True)
             
             # Determine which prompt fields to process based on dataset type
-            dataset = self.exp_config.dataset
-            input_prompt_fields = HumanEvalComm_prompts if dataset == "HumanEvalComm" else HumanEval_prompt
+            prompt_types = HumanEvalComm_prompts if self.exp_config.datasetConfig.dataset == "HumanEvalComm" else HumanEval_prompt
             # Process each prompt variant for the current problem
-            for input_prompt in input_prompt_fields:
-                if input_prompt not in problem:
+            for prompt_type in prompt_types:
+                if prompt_type not in problem:
                     continue
-                    
-                key = problem['name'] + '_' + input_prompt
+                key = problem['name'] + '_' + prompt_type
                 
                 # Skip if already processed (caching mechanism)
-                if self.log_config.log_phase_input == self.log_config.log_phase_output and key in self.cache.cached_names:
+                if self.exp_config.log_phase_input == self.exp_config.log_phase_output and key in self.cache.cached_names:
                     continue
                     
                 print("********************************************************************", file=self.log_config.print_file)
-                print("****** new problem (name="+problem['name']+" input_prompt="+input_prompt+") ******", file=self.log_config.print_file)
+                print("****** new problem (name="+problem['name']+" prompt_type="+prompt_type+") ******", file=self.log_config.print_file)
                 print("********************************************************************", file=self.log_config.print_file)
                 
-                description = problem[input_prompt]
+                
                 try:
                     # Multi-round evaluation with clarifying questions
-                    original_prompt = problem['prompt']
-                    entry_point = problem['entry_point']
-                    task_id = problem['name']
-                    
-                    # Determine if this is a modified prompt (triggers question mode)
-                    prompt_modified = False if input_prompt == 'prompt' else True
-                    prompt_start = ORIGINAL_PROMPT_START_0 if input_prompt == 'prompt' else self.exp_config.phase1_prompt
-                    
-                    handler = Handler(self.model, self.tokenizer, self.cache, self.exp_config, self.log_config)
                     response_list, code_list, qq_list, ans_list = handler.description_2_code_multi_rounds(
-                        prompt_modified= prompt_modified,
-                        task_id=task_id,
-                        entry_point=entry_point,
-                        prompt_start=prompt_start,
-                        description=description,
-                        original_prompt=original_prompt
+                        prompt_type=prompt_type,
+                        problem=problem
                     )
                 except Exception as e:
                     print('%s---------%s' % (problem['name'], e), flush=True)
@@ -165,12 +159,12 @@ class Experiment:
                 # RESULT LOGGING AND STORAGE
                 # ============================================================================
                 # Create the prompt based on experiment option
-                prompt = create_prompt(description, self.exp_config.option, self.remove_percentage)
-                self.log_result_(problem=problem,
-                    input_prompt=input_prompt,
+                prompt = create_prompt(problem[prompt_type], self.exp_config.datasetConfig.option, self.remove_percentage)
+                self.log_result_(
+                    problem=problem,
+                    prompt_type=prompt_type,
                     key=key,
                     prompt=prompt,
-                    description=description,
                     response_list=response_list,
                     code_list=code_list,
                     qq_list=qq_list,
@@ -183,11 +177,11 @@ class Experiment:
         
         print('Done!', flush=True)
 
-    def log_result_(self, problem, key, prompt, input_prompt, description, response_list, code_list, qq_list, ans_list):
+    def log_result_(self, problem, key, prompt, prompt_type, response_list, code_list, qq_list, ans_list):
         for i in range(len(response_list)):
             res = {
                 'name': problem['name'],
-                'prompt_type': input_prompt,
+                'prompt_type': prompt_type,
                 'index': i,
                 'response': response_list[i],
                 'answer': ans_list[i] if i < len(ans_list) else '',
@@ -195,16 +189,16 @@ class Experiment:
                 'code': code_list[i] if i < len(code_list) else '',
             }
 
-            if self.log_config.log_phase_output >= 1:
+            if self.exp_config.log_phase_output >= 1:
                 # Phase-based logging format (for multi-phase experiments)
                 res.update({'key': key,})
-                last_index = self.log_config.log_file.rfind('.log_')
-                log_file_output = self.log_config.log_file[:last_index] + '.log_' + str(self.log_config.log_phase_output)
+                last_index = self.cache.cached_file_path.rfind('.log_')
+                log_file_output = self.cache.cached_file_path[:last_index] + '.log_' + str(self.exp_config.log_phase_output)
                 
             else:
                 # Standard logging format (for complete experiments)
                 res.update({
-                    'original_prompt': description,
+                    'original_prompt': problem['prompt_type'],
                     'modified_prompt': prompt,
                 })
                 log_file_output = self.log_config.log_file

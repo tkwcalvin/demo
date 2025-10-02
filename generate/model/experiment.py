@@ -1,21 +1,34 @@
 from dataclasses import dataclass
 
-
+@dataclass
+class datasetConfig:
+    dataset: str
+    dataset_loc: str
+    min_problem_idx: int
+    max_num_problems: int
+    option: str
 
 @dataclass
-class CoreExpConfig:
-    dataset: str
+class modelConfig:
     model: str
     topn: int
     temperature: float
-    option: str
-    log_phase_input: int
-    log_phase_output: int
-    min_problem_idx: int
-    max_num_problems: int
-    dataset_loc: str
+
+    
+    
+@dataclass
+class promptConfig:
     phase1_prompt: str
     phase2_prompt: str
+
+@dataclass
+class CoreExpConfig:
+    datasetConfig: datasetConfig
+    modelConfig: modelConfig
+    promptConfig: promptConfig
+    log_phase_input: int
+    log_phase_output: int
+    
 
 @dataclass
 class AdvancedConfig:
@@ -32,6 +45,13 @@ class TestingConfig:
     do_save_model: bool
     pass_only: bool
     mask_func_name: bool
+
+
+@dataclass
+class PromptConfig:
+    phase1_prompt: str
+    phase2_prompt: str
+
 
 @dataclass
 class ExpConfig:

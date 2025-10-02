@@ -18,7 +18,6 @@ Input:  HumanEval.jsonl benchmark dataset
 Output: Log files in ./log/ directory with generated responses and code
 """
 
-from process import test_codellama, HumanEval_experiment
 import argparse
 from transformers import AutoModelForCausalLM, AutoTokenizer
 from peft import PeftModel
@@ -266,18 +265,24 @@ def load_model(args):
 def load_configs(args):
     exp_config = ExpConfig(
         coreExpConfig=CoreExpConfig(
-            dataset=args.dataset,
-            model=args.model,
-            topn=args.topn,
-            temperature=args.temperature,
-            option=args.option,
+            datasetConfig=datasetConfig(
+                dataset=args.dataset,
+                dataset_loc= "/homes/ktangaj/project/fyp/tkw/human-eval-comm/Benchmark/HumanEvalComm.jsonl",
+                min_problem_idx=args.min_problem_idx,
+                max_num_problems=args.max_num_problems,
+                option=args.option,
+            ),
+            modelConfig=modelConfig(
+                model=args.model,
+                topn=args.topn,
+                temperature=args.temperature,
+            ),
+            promptConfig=promptConfig(
+                phase1_prompt=args.phase1_prompt,
+                phase2_prompt=args.phase2_prompt,
+            ),
             log_phase_input=args.log_phase_input,
             log_phase_output=args.log_phase_output,
-            min_problem_idx=args.min_problem_idx,
-            max_num_problems=args.max_num_problems,
-            dataset_loc=args.dataset_loc,
-            phase1_prompt=args.phase1_prompt,
-            phase2_prompt=args.phase2_prompt,
         ),
         advancedConfig=AdvancedConfig(
             bootstrap_method=args.bootstrap_method,
@@ -299,29 +304,30 @@ def load_configs(args):
             saved_model_path=args.saved_model_path,
             finetuned_model_path=args.finetuned_model_path,
             hf_dir=args.hf_dir,
+            input_path=args.input_path,
+            user_input=args.user_input,
+            output_dir=args.output_dir,
         ),
         generationConfig=generationConfig(
             chain_length=args.chain_length,
             seq_length=args.seq_length,
             gen_length=args.gen_length,
             do_sample=args.do_sample,
+            top_k=args.top_k,
+            top_p=args.top_p,
+            num_return_sequences=args.num_return_sequences,
+            num_beams=args.num_beams,
         ),
         optimizationConfig=optimizationConfig(
             use_int8=args.use_int8,
             use_fp16=args.use_fp16,
             greedy_early_stop=args.greedy_early_stop,
         ),
+        
     )
 
 
-    log_config = LogConfig(
-        log_phase_input=args.log_phase_input,
-        log_phase_output=args.log_phase_output,
-    )
-
-    
-
-    return exp_config, open_source_model_config, log_config
+    return exp_config, open_source_model_config
     
 
 
@@ -332,30 +338,28 @@ if __name__ == "__main__":
     parser = init()
     args = parser.parse_args()
     model, tokenizer = load_model(args)
-    exp_config, open_source_model_config, log_config = load_configs(args)
+    exp_config, open_source_model_config = load_configs(args)
     
     # ============================================================================
     # EXECUTION MODE SELECTION
     # ============================================================================
-    if args.do_test_only:
-        # Test mode: Run a simple inference test with the loaded model
-        print("Running model test mode...")
-        test_codellama(tokenizer, model, args.user_input, args.seq_length)
-    elif args.do_save_model:
-        # Save mode: Save the loaded model and tokenizer to specified path
-        print(f"Saving model and tokenizer to {args.saved_model_path}...")
-        tokenizer.save_pretrained(args.saved_model_path)
-        model.save_pretrained(args.saved_model_path)
-    elif args.dataset.startswith('HumanEval'):
+    # if args.do_test_only:
+    #     # Test mode: Run a simple inference test with the loaded model
+    #     print("Running model test mode...")
+    #     test_codellama(tokenizer, model, args.user_input, args.seq_length)
+    # elif args.do_save_model:
+    #     # Save mode: Save the loaded model and tokenizer to specified path
+    #     print(f"Saving model and tokenizer to {args.saved_model_path}...")
+    #     tokenizer.save_pretrained(args.saved_model_path)
+    #     model.save_pretrained(args.saved_model_path)
+    if args.dataset.startswith('HumanEval'):
         # Main experiment mode: Run the full HumanEval experiment
         print(f"Starting HumanEval experiment with dataset: {args.dataset}")
         print(f"Model: {args.model}, Temperature: {args.temperature}, Top-N: {args.topn}")
         print(f"Option: {args.option}")
-        HumanEval_experiment(
-            exp_config.coreExpConfig,
-            model, 
-            tokenizer
-        )
+        experiment = Experiment(exp_config.coreExpConfig)
+        experiment.HumanEval_experiment(model, tokenizer)
+        
     else:
         print(f"Unsupported dataset: {args.dataset}")
         print("Supported datasets: HumanEval, HumanEvalComm, APPS, code_contest")

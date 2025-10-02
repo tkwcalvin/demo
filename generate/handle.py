@@ -23,48 +23,48 @@ Features:
 """
 
 # legacy code (randRemove) where only one-round evaluation is enabled
-import openai
-from utils import response_2_code, response_2_code_if_no_text
+from utils import response_2_code, response_2_code_if_no_text, call_azure_openai, get_azure_openai_client
 from config import *
-from callers.CodeLlama import get_completion_codellama_instruct_nl_to_pl
 import re
 from model.cache import Cache
 from model.log import LogConfig
-from model.experiment import ExpConfig
+from model.experiment import CoreExpConfig
+from prompt import load_prompt_from_config
 
 
 class Handler:
-    def __init__(self, model, tokenizer, cache: Cache, exp_config: ExpConfig, log_config: LogConfig):
+    def __init__(self, model, tokenizer, cache: Cache, exp_config: CoreExpConfig, log_config: LogConfig):
         self.model = model
         self.tokenizer = tokenizer
         self.cache = cache
         self.log_config = log_config
         self.exp_config = exp_config
+        # Determine if this is a modified prompt (triggers question mode)
+        self.prompt_phase1 = load_prompt_from_config(phase = 1, prompt_config = self.exp_config.promptConfig)
+        self.prompt_phase2 = load_prompt_from_config(phase = 2, prompt_config = self.exp_config.promptConfig)
+        self.client = get_azure_openai_client()
 
 
-    def description_2_code_multi_rounds(self, prompt_modified, task_id, entry_point, prompt_start, description, original_prompt):
-        # ============================================================================
-        # INITIALIZATION
-        # ============================================================================
-        
-        response_list = []
+    
+
+    def description_2_code_multi_rounds(self, prompt_type, problem):
         code_list = []
         qq_list = []
         ans_list = []
-        
-        
+        #the key for cache access
+        key = problem['name'] + '_' + prompt_type
         # ============================================================================
         # ROUND 1: INITIAL RESPONSE GENERATION
         # ============================================================================
-        response_list, messages = self.generate_init_response()
+        #generate initial response for clarifying questions or codes
+        messages, response_list = self.generate_init_response(problem[prompt_type], key)
         # Early return if only first round is needed
-        if self.cache.log_phase_output == 1:
+        if self.exp_config.log_phase_output == 1:
             return response_list, [], [], []
-        # ============================================================================
-        # PROCESSING EACH RESPONSE
-        # ============================================================================
-        for i in range(len(response_list)):
-            response = response_list[i]
+        
+        # print("response_list: ", response_list)
+        print("type of response_list: ", type(response_list[0]))
+        for response in response_list:
             code = response_2_code_if_no_text(response)
             
             print("\n\n!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!", file=self.log_config.print_file)
@@ -81,15 +81,15 @@ class Handler:
             # ============================================================================
             if code == '':
                 
-                if self.cache.log_phase_output >= 3:
+                if self.exp_config.log_phase_input >= 2:
                     # Use cached evaluation results for phase-based evaluation
-                    answer = self.cache.cached_answer
-                    question_quality = self.cache.cached_qq
+                    answer = self.cache.cached_answers.get(key, '')
+                    question_quality = self.cache.cached_qqs.get(key, '')
                 else:
-                    # Perform live evaluation of questions
-                    answer, question_quality = self.evaluate_clarifying_questions()
+                    # Perform live evaluation of clarifying questions
+                    answer, question_quality = self.evaluate_clarifying_questions(problem['prompt'], response, problem[prompt_type])
                 
-                if self.cache.log_phase_output == 2:
+                if self.exp_config.log_phase_output == 2:
                     # Only return evaluation results, skip final code generation
                     ans_list.append(answer)
                     qq_list.append(question_quality)
@@ -98,7 +98,7 @@ class Handler:
                 # ============================================================================
                 # ROUND 3: FINAL CODE GENERATION WITH Q&A CONTEXT
                 # ============================================================================
-                code = self.generate_final_response()
+                code = self.generate_final_response(messages, response, answer)
             # Store results for this response
             qq_list.append(question_quality)
             code_list.append(code)
@@ -108,32 +108,27 @@ class Handler:
 
 
 
-    def generate_init_response(self):
+    def generate_init_response(self, description, key):
+        response_list = []
         messages = []
-        if(self.model_config.model == 'Okanagan'):
-            full_prompt = OK_PROMPT_CODEGEN + self.exp_config.user_input
-        else:
-            full_prompt = self.exp_config.prompt.format(problem=self.exp_config.user_input)
-
+        full_prompt = OK_PROMPT_CODEGEN + description
         print("\n\n!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!", file=self.log_config.print_file)
         print('!!!!!!!!!!!!! prompt:\n' + full_prompt, file=self.log_config.print_file)
         print("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!\n", file=self.log_config.print_file)
-        
         messages.append({"role": "user","content": full_prompt})
-        
+
+        if self.exp_config.log_phase_input >= 1:
+            response_list = [self.cache.cached_responses.get(key, '')]
+            return messages, response_list
         # Generate first-round response (or use cached response for phase-based evaluation)
-        if self.cache.log_phase_output >= 2:
-            response_list.append(self.cache.cached_response)
-        else:
-            response_list = generate_response()
-            
-        return response_list, messages
+        response_list = self.generate_response(messages, 1, 1.0, description)
+        return messages, response_list
 
 
 
 
 
-    def evaluate_clarifying_questions(self):
+    def evaluate_clarifying_questions(self, missing_information, clarifying_questions, problem_description):
         """
         Evaluate the quality of clarifying questions and generate answers.
         
@@ -148,74 +143,63 @@ class Handler:
                 - answer_string: Generated answer to the clarifying questions
                 - quality_score: Quality rating of the questions (0-3 scale)
         """
-        print("\n\n!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!", file=print_file)
-        print('!!!!!!! 2nd evaluate_clarifying_questions START !!!!!!!!!!!', file=print_file)
-        
-        # ============================================================================
-        # STANDARD EVALUATION PROTOCOL (Default)
-        # ============================================================================
-        # Use GPT-3.5-turbo for standard evaluation with regex parsing
-        
-        topn = 1
-        temperature = 1.0
-        model = 'gpt-3.5-turbo-0125'  # Default model for evaluation
-        prompt_evaluate_questions = load_prompt_from_config(phase = 2)
-        
+        print("\n\n!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!", file=self.log_config.print_file)
+        print('!!!!!!! 2nd evaluate_clarifying_questions START !!!!!!!!!!!', file=self.log_config.print_file)
+        prompt_evaluate_questions = self.prompt_phase2
         # Format the evaluation prompt with the provided information
         content = prompt_evaluate_questions.format(
                     missing_information=missing_information,
                     clarifying_questions=clarifying_questions,
-                    problem=problem
+                    problem=problem_description
                 )
         
-        # Call OpenAI API for evaluation
-        completion = openai.ChatCompletion.create(
-            model=model,
-            n=topn,
-            temperature=temperature,
-            messages=[{
-                "role": "user",
-                "content": content,
-            }]
-        )
+        messages = []
+        messages.append({"role": "user","content": content})
+        response_list, error = call_azure_openai(messages, self.client, 1, 1)
+        if error:
+            print("call azure_openai error: ", error, file=self.log_config.print_file)
+            return "", ""
         
-        print('!!!!!!!PROMPT_EVALUATE_QUESTIONS='+content, file=print_file)
-        print('!!!!!!!Completion='+completion['choices'][0]['message']['content'], file=print_file)
+        print('!!!!!!!PROMPT_EVALUATE_QUESTIONS='+content, file=self.log_config.print_file)
+        print('!!!!!!!Completion='+response_list[0], file=self.log_config.print_file)
         
         # ============================================================================
         # RESPONSE PARSING
         # ============================================================================
         # Extract quality score and answers using regex patterns
-        completion_content = str(completion['choices'][0]['message']['content'])
+        response_str = str(response_list[0])
 
         # Extract quality score (integer following "QUALITY=")
-        question_quality = re.findall(r'QUALITY\s*=?\s*(\d+)', completion_content)
+        question_quality = re.findall(r'QUALITY\s*=?\s*(\d+)', response_str)
         
         # Extract answers (text within triple backticks following "ANSWERS=")
-        answers = re.findall(r'ANSWERS\s*=?\s*```(.+?)```', completion_content, flags=re.DOTALL)
+        answers = re.findall(r'ANSWERS\s*=?\s*```(.+?)```', response_str, flags=re.DOTALL)
         
         # Extract the first answer and quality score, or use empty string if not found
         answer_str = answers[0] if answers else ""
         question_quality_str = question_quality[0] if question_quality else ""
         
-        print('!!!!!!!answer_str',answer_str, file=print_file)
-        print('!!!!!!!question_quality_str',question_quality_str, file=print_file)
+        print('!!!!!!!answer_str',answer_str, file=self.log_config.print_file)
+        print('!!!!!!!question_quality_str',question_quality_str, file=self.log_config.print_file)
         
-        print('!!!!!!! 2nd evaluate_clarifying_questions END !!!!!!!!!!!', file=print_file)
-        print("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!\n\n", file=print_file)
+        print('!!!!!!! 2nd evaluate_clarifying_questions END !!!!!!!!!!!', file=self.log_config.print_file)
+        print("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!\n\n", file=self.log_config.print_file)
         return answer_str, question_quality_str
     
 
 
     def generate_final_response(self, messages, response, answer):
-        self.model_config.model = OK_MODEL if self.model_config.model == 'Okanagan' else self.model_config.model
         # Standard multi-turn conversation format
         msgs_i = messages.copy()
         msgs_i.append({"role":"assistant","content": response})
         msgs_i.append({"role":"user","content": answer + PROMPT_2ND_ROUND})
         
         # Generate final code with full conversation context
-        response_2nd = generate_response(self.log_config, msgs_i, self.model_config, topn=1, temperature=self.model_config.temperature)
+        # response_2nd = self.generate_response(msgs_i, topn=1, temperature=1.0)
+        response_2nd, error = call_azure_openai(msgs_i, self.client, 1, 1.0)
+        if error:
+            print("call azure_openai error: ", error, file=self.log_config.print_file)
+            return ''
         code = response_2_code(response_2nd[0])
         
         print("\n\n!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!", file=self.log_config.print_file)
@@ -225,89 +209,39 @@ class Handler:
         return code
 
 
-def generate_response_str(model, msgs, temperature, args, open_source_model, tokenizer):
-    """
-    Generate a single response string (convenience function).
-    
-    Args:
-        model (str): Model identifier
-        msgs (list): List of message dictionaries
-        temperature (float): Sampling temperature
-        args: Command line arguments
-        open_source_model: Loaded model (if applicable)
-        tokenizer: Model tokenizer (if applicable)
-    
-    Returns:
-        str: Single generated response
-    """
-    response_list = generate_response(model, msgs, 1, temperature, args, open_source_model, tokenizer)
-    return response_list[0]
-    
-def generate_response(log_config,msgs,model_config, topn, temperature):
-    response_list = []
-    
-    # ============================================================================
-    # OPEN SOURCE MODELS (CodeLlama, DeepSeek, CodeQwen)
-    # ============================================================================
-    # if 'Llama' in args.model or 'deepseek' in args.model or 'CodeQwen' in args.model:
-    #     # Apply chat template for instruction-tuned models
-    #     user_input = tokenizer.apply_chat_template(msgs, tokenize=False, add_generation_prompt=True, return_tensors="pt")
+
+
         
-    #     for i in range(topn):
-    #         if 'two-shot' in args.model:
-    #             # Two-shot prompting with predefined examples
-    #             response_list.append(get_completion_codellama_instruct_nl_to_pl(CODELLAMA_NL_2_PL_HUMANEVAL, user_input_without_prompt, open_source_model, tokenizer, args))
-    #         elif 'Llama' in args.model:
-    #             # Custom prompt for CodeLlama models
-    #             CODELLAMA_NL_2_PL_PROMPT = [
-    #                 {  # Instructions
-    #                     "role": "system",
-    #                     "content": prompt,
-    #                 },
-    #             ]
-    #             response_list.append(get_completion_codellama_instruct_nl_to_pl('CODELLAMA', prompt + user_input_without_prompt, open_source_model, tokenizer, args))
-    #         else:
-    #             # Standard generation for other open source models
-    #             response_list.append(get_completion_codellama_instruct_nl_to_pl('', user_input, open_source_model, tokenizer, args))
-    #     return response_list
-    # ============================================================================
-    # SPECIAL MODELS
-    # ============================================================================
-    if model_config.model == 'Okanagan':
+    def generate_response(self, messages, topn = 1, temperature = 1.0, promblem_description = ''):
+        response_list = []
+        
         """
         Okanagan model: Two-step process with reflection.
         First generates code, then reflects on whether questions are needed.
         """
+        
         # Note: This assumes topn=1 (single response)
-        coder_response = generate_response_str(msgs, model_config)
+        coder_response, error = call_azure_openai(messages, self.client, 1, temperature)
+        if error:
+            print("call azure_openai error: ", error, file=self.log_config.print_file)
+            return []
 
         # Reflection step: determine if clarifying questions are needed
-        reflect_messages = [{"role": "user","content": OK_PROMPT_CLARIFY_Q.format(code=coder_response, problem=user_input_without_prompt)}]
-        communicator_response = generate_response_str(reflect_messages, model_config)
+        reflect_messages = [{"role": "user","content": OK_PROMPT_CLARIFY_Q_V1.format(code=coder_response[0], problem=promblem_description)}]
+        communicator_response, error = call_azure_openai(reflect_messages, self.client, 1, temperature)
+        if error:
+            print("call azure_openai error: ", error, file=self.log_config.print_file)
+            return []
         
-        print("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!", file=log_config.print_file)
-        print("!!!!!!!!!!!!!!! Okanagan !!!!!! communicator_response: \n" + communicator_response, file=log_config.print_file)
-        print("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!\n", file=log_config.print_file)
+        print("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!", file=self.log_config.print_file)
+        print("!!!!!!!!!!!!!!! Okanagan !!!!!! communicator_response: \n" + communicator_response[0], file=self.log_config.print_file)
+        print("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!\n", file=self.log_config.print_file)
         
         # Decide final response based on reflection
-        if re.search('no_questions', communicator_response, re.IGNORECASE):
-            response_list.append(coder_response)  # Use the original code
+        if re.search('no_questions', communicator_response[0], re.IGNORECASE):
+            response_list.append(coder_response[0])  # Use the original code
         else:
-            response_list.append(communicator_response)  # Use the questions
+            response_list.append(communicator_response[0])  # Use the questions
         return response_list  
+            
         
-        
-    # ============================================================================
-    # STANDARD OPENAI MODELS
-    # ============================================================================
-    else:
-        # Standard OpenAI API call for GPT models
-        completion = openai.ChatCompletion.create(
-            model=model,
-            n=topn,
-            temperature=temperature,
-            messages=msgs
-        )
-        for i in completion['choices']:
-            response_list.append(i['message']['content'])
-        return response_list

@@ -28,24 +28,13 @@ class optimizationConfig:
     greedy_early_stop: bool
     
 
-@dataclass
-class testingConfig:
-    do_test_only: bool
-    do_save_model: bool
-    pass_only: bool
-    mask_func_name: bool
-    bootstrap_method: str
-    resume_task_bs: int
-    resume_task_run: int
-    skip_bootstrap: bool
-    version: str
 
 @dataclass
 class openSourceModelConfig:
     pathConfig: pathConfig
     generationConfig: generationConfig
     optimizationConfig: optimizationConfig
-    testingConfig: testingConfig
+
 
 
 

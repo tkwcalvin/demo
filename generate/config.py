@@ -44,21 +44,21 @@ set_seed(42)
 # MODEL-SPECIFIC FORMATTING CONSTANTS
 # ============================================================================
 # CodeLlama instruction formatting tokens
-B_INST_CLLAMA, E_INST_CLLAMA = "[INST]", "[/INST]"
-B_SYS_CLLAMA, E_SYS_CLLAMA = "<<SYS>>\n", "\n<</SYS>>\n\n"
+# B_INST_CLLAMA, E_INST_CLLAMA = "[INST]", "[/INST]"
+# B_SYS_CLLAMA, E_SYS_CLLAMA = "<<SYS>>\n", "\n<</SYS>>\n\n"
 
 # ============================================================================
 # API CONFIGURATION
 # ============================================================================
 # OpenAI API configuration
 # openai.api_key = os.environ['OPENAI_KEY']
-openai.api_key = os.environ['OPENAI_API_KEY']  # Alternative environment variable name
-client = OpenAI()
+# openai.api_key = os.environ['OPENAI_API_KEY']  # Alternative environment variable name
+# client = OpenAI()
 
-# Google Gemini API configuration
-gemini_api_key = os.getenv("GEMINI_API_KEY")
-genai.configure(api_key=gemini_api_key)
-gemini_model = genai.GenerativeModel("gemini-pro")
+# # Google Gemini API configuration
+# gemini_api_key = os.getenv("GEMINI_API_KEY")
+# genai.configure(api_key=gemini_api_key)
+# gemini_model = genai.GenerativeModel("gemini-pro")
 # ============================================================================
 # PROMPT TEMPLATES FOR CODE GENERATION
 # ============================================================================
@@ -132,11 +132,11 @@ OK_PROMPT_CODEGEN = 'Generate Python code directly (Markdown) to solve the codin
 OK_PROMPT_CLARIFY_Q = 'Given the programming problem, ask clarifying questions if the requirements in the given problem description are incomplete, inconsistent or ambiguous for solving the problem correctly and passing the tests. \n If no need to ask clarifying questions, return strictly \'NO_QUESTIONS\' only. Otherwise, return the clarifying questions. \n\n ### Problem: \n {problem}'
 
 # Alternative clarifying questions prompt (version 1)
-OK_PROMPT_CLARIFY_Q_V1 = 'Given the coding problem description and the generated code above, decide whether to ask clarifying questions that are necessary to solve the problem correctly. \n If no need to ask clarifying questions, return strictly \'NO_QUESTIONS\' only. Otherwise, return the clarifying questions. \n\n'
+OK_PROMPT_CLARIFY_Q_V1 = '###Problem: \n {problem} \n\n ###Code: \n {code} \n\n Given the coding problem description and the generated code above, decide whether to ask clarifying questions that are necessary to solve the problem correctly. \n If no need to ask clarifying questions, return strictly \'NO_QUESTIONS\' only. Otherwise, return the clarifying questions. \n\n'
 
 # Default model for Okanagan experiments
 OK_MODEL = 'gpt-3.5-turbo-0125'
-
+OK_MODEL_AZURE = 'gpt-35-turbo'
 # ============================================================================
 # MODEL CLASSIFICATION LISTS
 # ============================================================================

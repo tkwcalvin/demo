@@ -17,7 +17,6 @@ Features:
 
 from utils import split_and_remove_chunk, split_and_replace_with_random_words
 from config import PROMPT_START_3, PROMPT_START_3_v2
-from main import args
 import os
 import yaml
 
@@ -29,7 +28,7 @@ try:
 except Exception:
     print("cannot find config.yaml!!")
 
-def load_prompt_from_config(phase):
+def load_prompt_from_config(phase, prompt_config):
     """
     Load prompt template from config.yaml based on experiment phase.
     
@@ -50,9 +49,9 @@ def load_prompt_from_config(phase):
     """
     # Determine which prompt ID to use based on phase
     if(phase == 1):
-        prompt_id = args.phase1_prompt
+        prompt_id = prompt_config.phase1_prompt
     elif(phase == 2):
-        prompt_id = args.phase2_prompt
+        prompt_id = prompt_config.phase2_prompt
     else:
         print(f'Invalid phase number passed to "load_prompt_from_config" function')
         raise SystemExit(1)

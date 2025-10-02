@@ -20,7 +20,9 @@ Features:
 import random
 import re
 from config import common_words
-
+from config import OK_MODEL_AZURE
+import os
+from openai import AzureOpenAI
 
 # ============================================================================
 # RANDOM WORD GENERATION
@@ -276,3 +278,47 @@ def call_chatgpt_o1(prompt, client):
         return int(completion.choices[0].message.content.strip())
     except ValueError:
         return -1
+
+
+
+def call_azure_openai(msgs, client, topn, temperature):
+    """
+    Call Azure OpenAI API for evaluation tasks.
+    
+    Args:
+        prompt (str): The prompt to send to Azure OpenAI
+    
+    Returns:
+        int: Parsed integer response from Azure OpenAI, or -1 if parsing fails
+    """
+    response_list = []
+    # print(msgs, '\n', type(msgs))
+    # if not isinstance(msgs, list):
+    #     msgs = [msgs]
+    # Standard OpenAI API call for GPT models
+    try:
+        completion = client.chat.completions.create(
+            model=OK_MODEL_AZURE,
+            n=topn,
+            temperature=temperature,
+            messages=msgs
+        )
+    except Exception as e:
+        print(e)
+        return [], e
+
+
+    for i in completion.choices:
+        print(i.message.content, '\n', type(i.message.content))
+        response_list.append(i.message.content)
+    return response_list, None
+
+
+
+def get_azure_openai_client():
+    client = AzureOpenAI(
+        api_key=os.environ['AZURE_OPENAI_API_KEY'],
+        azure_endpoint=os.environ['AZURE_OPENAI_API_BASE'],
+        api_version="2023-05-15"
+    )
+    return client

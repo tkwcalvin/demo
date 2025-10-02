@@ -87,6 +87,7 @@ OK_PROMPT_CODEGEN = 'Generate Python code directly (Markdown) to solve the codin
 OK_PROMPT_CLARIFY_Q = 'Given the programming problem, ask clarifying questions if the requirements in the given problem description are incomplete, inconsistent or ambiguous for solving the problem correctly and passing the tests. \n If no need to ask clarifying questions, return strictly \'NO_QUESTIONS\' only. Otherwise, return the clarifying questions. \n\n ### Problem: \n {problem}'
 OK_PROMPT_CLARIFY_Q_V1 = 'Given the coding problem description and the generated code above, decide whether to ask clarifying questions that are necessary to solve the problem correctly. \n If no need to ask clarifying questions, return strictly \'NO_QUESTIONS\' only. Otherwise, return the clarifying questions. \n\n'
 OK_MODEL = 'gpt-3.5-turbo-0125'
+OK_MODEL_AZURE = 'gpt-35-turbo'
 
 # Instruction-tuned Models and Foundation Models have different nl_2_pl/pl_2_nl prompts and functions
 INSTRUCTION_MODELS = [
@@ -834,46 +835,46 @@ def calculate_percentage_integer(value, percentage):
     
     return rounded_result
 
-# legacy code (randRemove) where only one-round evaluation is enabled
-def description_2_code_one_round(prompt, model, topn, temperature, args, open_source_model, tokenizer):
-    if model=='comm':
-        completion = openai.ChatCompletion.create(
-            model='gpt-3.5-turbo',
-            n=1,
-            temperature=temperature,
-            messages=[{"role": "user",
-                       "content": prompt},
-                      ]
-        )
-        first_response_list = []
-        for i in completion.choices:
-            first_response_list.append(i.message.content)
+# # legacy code (randRemove) where only one-round evaluation is enabled
+# def description_2_code_one_round(prompt, model, topn, temperature, args, open_source_model, tokenizer):
+#     if model=='comm':
+#         completion = openai.ChatCompletion.create(
+#             model='gpt-3.5-turbo',
+#             n=1,
+#             temperature=temperature,
+#             messages=[{"role": "user",
+#                        "content": prompt},
+#                       ]
+#         )
+#         first_response_list = []
+#         for i in completion.choices:
+#             first_response_list.append(i.message.content)
 
-        new_prompt = "You are an expert in software engineering. You will be given the problem description and current code of a coding task. You will decide whether to ask clarifying questions or return the code with markup. \n ### Problem Description: \n"+ prompt + "\n ### Generated Code From Previous Iteration:\n" + first_response_list[0]
+#         new_prompt = "You are an expert in software engineering. You will be given the problem description and current code of a coding task. You will decide whether to ask clarifying questions or return the code with markup. \n ### Problem Description: \n"+ prompt + "\n ### Generated Code From Previous Iteration:\n" + first_response_list[0]
         
-        completion = openai.ChatCompletion.create(
-            model='gpt-3.5-turbo',
-            n=topn,
-            temperature=temperature,
-            messages=[{"role": "user",
-                       "content": new_prompt},
-                      ]
-        )
-        response_list = []
-        # code_list = []
-        for i in completion.choices:
-            response_list.append(i.message.content)
+#         completion = openai.ChatCompletion.create(
+#             model='gpt-3.5-turbo',
+#             n=topn,
+#             temperature=temperature,
+#             messages=[{"role": "user",
+#                        "content": new_prompt},
+#                       ]
+#         )
+#         response_list = []
+#         # code_list = []
+#         for i in completion.choices:
+#             response_list.append(i.message.content)
 
-    else:
-        messages=[{"role": "user", "content": prompt}]
-        response_list = generate_response(model, messages, topn, temperature, args, open_source_model, tokenizer)
-    code_list = []
-    qq_list = []
-    for i in range(len(response_list)):
-        code = response_2_code(response_list[i])
-        code_list.append(code)
-        qq_list.append('0')
-    return response_list, code_list, qq_list
+#     else:
+#         messages=[{"role": "user", "content": prompt}]
+#         response_list = generate_response(model, messages, topn, temperature, args, open_source_model, tokenizer)
+#     code_list = []
+#     qq_list = []
+#     for i in range(len(response_list)):
+#         code = response_2_code(response_list[i])
+#         code_list.append(code)
+#         qq_list.append('0')
+#     return response_list, code_list, qq_list
 
 def generate_response_str(model, msgs, temperature, args, open_source_model, tokenizer):
     response_list = generate_response(model, msgs, 1, temperature, args, open_source_model, tokenizer)
@@ -900,13 +901,13 @@ def generate_response(model, msgs, topn, temperature, args, open_source_model, t
     elif model == 'Okanagan':
         # this code assume topn=1
         # set the real model used by Okanagan
-        coder_response = generate_response_str(OK_MODEL, msgs, temperature, args, open_source_model, tokenizer)
+        coder_response = generate_response_str(OK_MODEL_AZURE, msgs, temperature, args, open_source_model, tokenizer)
 
         # Reflection
         reflect_messages = [{"role": "user","content": OK_PROMPT_CLARIFY_Q.format(code=coder_response, problem=user_input_without_prompt)}]
         # messages.append({"role": "assistant","content": coder_response})
         # messages.append({"role": "user","content": OK_PROMPT_CLARIFY_Q})
-        communicator_response = generate_response_str(OK_MODEL, reflect_messages, temperature, args, open_source_model, tokenizer)
+        communicator_response = generate_response_str(OK_MODEL_AZURE, reflect_messages, temperature, args, open_source_model, tokenizer)
         print("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!", file=print_file)
         print("!!!!!!!!!!!!!!! Okanagan !!!!!! communicator_response: \n" + communicator_response, file=print_file)
         print("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!\n", file=print_file)
